@@ -1,75 +1,87 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# https://docs.open.alipay.com/270/105899
-# pip install pycryptodome
 
+"""
+ #  @file       alipay.py
+ #  @brief      https://docs.open.alipay.com/270/105899
+                pip install pycryptodome
+ #  @version    1.0.0
+ #  @author     LindenTao(lindentao@qq.com)
+ #  @date       17/10/23 上午11:32
+ #  @history    <author>    <time>    <desc>
+
+"""
+
+import json
 from datetime import datetime
 from Crypto.PublicKey import RSA
 from Crypto.Signature import PKCS1_v1_5
 from Crypto.Hash import SHA256
-from base64 import b64encode, b64decode
 from urllib.parse import quote_plus
 from urllib.parse import urlparse, parse_qs
-from urllib.request import urlopen
 from base64 import decodebytes, encodebytes
 
-import json
+import config
 
 
 class AliPay(object):
     """
     支付宝支付接口
     """
-    def __init__(self, appid, app_notify_url, app_private_key_path,
-                 alipay_public_key_path, return_url, debug=False):
-        self.appid = appid
-        self.app_notify_url = app_notify_url
-        self.app_private_key_path = app_private_key_path
-        self.app_private_key = None
-        self.return_url = return_url
-        with open(self.app_private_key_path) as fp:
-            self.app_private_key = RSA.importKey(fp.read())
-
-        self.alipay_public_key_path = alipay_public_key_path
-        with open(self.alipay_public_key_path) as fp:
-            self.alipay_public_key = RSA.import_key(fp.read())
-
+    def __init__(self, app_id, debug=False):
+        self.app_id = app_id
+        self.charset = 'utf-8'
+        self.sign_type = 'RSA2'
+        self.version = '1.0'
+        self.notify_url = config.notify_url
+        self.return_url = config.return_url
+        self.app_private_key = RSA.importKey(config.private_key)
+        self.alipay_public_key = RSA.import_key(config.public_key)
 
         if debug is True:
             self.__gateway = "https://openapi.alipaydev.com/gateway.do"
         else:
             self.__gateway = "https://openapi.alipay.com/gateway.do"
 
-    def direct_pay(self, subject, out_trade_no, total_amount, return_url=None, **kwargs):
+    def alipay_trade_page_pay(self, out_trade_no, total_amount, subject, method='alipay.trade.page.pay',
+                              product_code='FAST_INSTANT_TRADE_PAY', **kwargs):
+        # PC场景下单并支付
         biz_content = {
-            "subject": subject,
             "out_trade_no": out_trade_no,
             "total_amount": total_amount,
-            "product_code": "FAST_INSTANT_TRADE_PAY",
-            # "qr_pay_mode":4
+            "subject": subject,
+            "product_code": product_code
         }
-
         biz_content.update(kwargs)
-        data = self.build_body("alipay.trade.page.pay", biz_content, self.return_url)
-        return self.sign_data(data)
 
-    def build_body(self, method, biz_content, return_url=None):
-        data = {
-            "app_id": self.appid,
+        params = {
+            "app_id": self.app_id,
+            "charset": self.charset,
+            "sign_type": self.sign_type,
+            "version": self.version,
             "method": method,
-            "charset": "utf-8",
-            "sign_type": "RSA2",
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.0",
             "biz_content": biz_content
         }
+        if self.notify_url:
+            params["notify_url"] = self.notify_url
+        if self.return_url:
+            params["return_url"] = self.return_url
 
-        if return_url is not None:
-            data["notify_url"] = self.app_notify_url
-            data["return_url"] = self.return_url
+        # params = {
+        #     "app_id": '2014072300007148',
+        #     "charset": 'GBK',
+        #     "sign_type": 'RSA2',
+        #     "version": '1.0',
+        #     "method": 'alipay.mobile.public.menu.add',
+        #     "timestamp": '2014-07-24 03:07:50',
+        #     "biz_content": '''{"button":[{"actionParam":"ZFB_HFCZ","actionType":"out","name":"话费充值"},{"name":"查询","subButton":[{"actionParam":"ZFB_YECX","actionType":"out","name":"余额查询"},{"actionParam":"ZFB_LLCX","actionType":"out","name":"流量查询"},{"actionParam":"ZFB_HFCX","actionType":"out","name":"话费查询"}]},{"actionParam":"http://m.alipay.com","actionType":"link","name":"最新优惠"}]}'''
+        # }
 
-        return data
+        return self.sign_data(params)
 
     def sign_data(self, data):
+        # 筛选、排序、拼接成待签名字符串
         data.pop("sign", None)
         # 排序后的字符串
         unsigned_items = self.ordered_data(data)
@@ -103,49 +115,39 @@ class AliPay(object):
         sign = encodebytes(signature).decode("utf8").replace("\n", "")
         return sign
 
-    def _verify(self, raw_content, signature):
-        # 开始计算签名
+    def verify(self, data, signature):
+        # 验证签名
+        message = "&".join("{0}={1}".format(k, data[k]) for k in sorted(data) if k != 'sign_type' and data[k])
         key = self.alipay_public_key
         signer = PKCS1_v1_5.new(key)
         digest = SHA256.new()
-        digest.update(raw_content.encode("utf8"))
+        digest.update(message.encode("utf8"))
         if signer.verify(digest, decodebytes(signature.encode("utf8"))):
             return True
         return False
 
-    def verify(self, data, signature):
-        if "sign_type" in data:
-            sign_type = data.pop("sign_type")
-        # 排序后的字符串
-        unsigned_items = self.ordered_data(data)
-        message = "&".join(u"{}={}".format(k, v) for k, v in unsigned_items)
-        return self._verify(message, signature)
-
 
 if __name__ == "__main__":
-    return_url = 'http://47.92.87.172:8000/?total_amount=0.01&timestamp=2017-08-15+17%3A15%3A13&sign=jnnA1dGO2iu2ltMpxrF4MBKE20Akyn%2FLdYrFDkQ6ckY3Qz24P3DTxIvt%2BBTnR6nRk%2BPAiLjdS4sa%2BC9JomsdNGlrc2Flg6v6qtNzTWI%2FEM5WL0Ver9OqIJSTwamxT6dW9uYF5sc2Ivk1fHYvPuMfysd90lOAP%2FdwnCA12VoiHnflsLBAsdhJazbvquFP%2Bs1QWts29C2%2BXEtIlHxNgIgt3gHXpnYgsidHqfUYwZkasiDGAJt0EgkJ17Dzcljhzccb1oYPSbt%2FS5lnf9IMi%2BN0ZYo9%2FDa2HfvR6HG3WW1K%2FlJfdbLMBk4owomyu0sMY1l%2Fj0iTJniW%2BH4ftIfMOtADHA%3D%3D&trade_no=2017081521001004340200204114&sign_type=RSA2&auth_app_id=2016080600180695&charset=utf-8&seller_id=2088102170208070&method=alipay.trade.page.pay.return&app_id=2016080600180695&out_trade_no=201702021222&version=1.0'
+    # post 参数:b'gmt_create=2017-10-24+11%3A24%3A33&charset=utf-8&gmt_payment=2017-10-24+11%3A24%3A41&notify_time=2017-10-24+11%3A24%3A42&subject=%E6%B5%8B%E8%AF%95%E8%AE%A2%E5%8D%95&sign=vhbCTlz2TqXu99b7d6G2MqEEB3U7NnCybVH34lW6CdbXlwmd5lj%2BDxDmkEfkBFGADMNegv9%2FmZNAD%2BrLjNUpj0jHAxxtswzjW9lUYOJQHa0LdoO%2FMI3%2FqFFDzcF8jzr7l6Pi066kRVx43u2iijw77op%2BbGfQLJ9J2AYNhBYUJpB7oaYwmNnYsvAbC%2Fr8dLsUGGvmXud5vPt08jCg2orUF42Z6u2w3CK4HgHTVUsysdReiz3EFvBIaoRzblJIavktycCTzzp1w68KVlgKBbyDK1M%2BG7lZuXvAFc5jbYY6Bh172kUJcBUYFoPPPeRc0sJWK1Q3HiOF%2BasUZSIuKX16cw%3D%3D&buyer_id=2088102174781102&invoice_amount=0.01&version=1.0&notify_id=8b4b9d16cfd30a532ad9dfeeeda3631gru&fund_bill_list=%5B%7B%22amount%22%3A%220.01%22%2C%22fundChannel%22%3A%22ALIPAYACCOUNT%22%7D%5D&notify_type=trade_status_sync&out_trade_no=2017020212231&total_amount=0.01&trade_status=TRADE_SUCCESS&trade_no=2017102421001004100200369973&auth_app_id=2016080800194155&receipt_amount=0.01&point_amount=0.00&app_id=2016080800194155&buyer_pay_amount=0.01&sign_type=RSA2&seller_id=2088102170454992'
+    callback_url = 'http://14.215.135.16:60600/flow/alipay?total_amount=0.01&timestamp=2017-10-24+11%3A24%3A49&sign=vVfK7ce7jNwhJGyOp9q1vsx1Vq%2FfokgSZaT4oRuAe3PEmg5q5rwi%2FODpe8kSaWbTGJt9kxAs18GHa8lVQkD1tYCengGNZY2XwBPLSKXc1hKixx4G1Sem%2FcI%2FW1gTkbk4GlPaipSrvJAsou4ATSepgpNogbsm1Hg1A7zo3ik72Q0uXreCEOUOXlL9PIibby8rGAnrkzKxrglp9RZJDjg2DakWunLROBqAd136SkboXfweJmcxLpG%2Bk7F3LBo6B%2Ba9KA%2BdHWr4pAF%2FeQ%2BbBM3JuRX5c3J9BFKL47gOIQGSAmtKgECs5zuy%2BIGTSvEI9Mmmo8iIs7Mx%2B1cPvoW6Any%2F1A%3D%3D&trade_no=2017102421001004100200369973&sign_type=RSA2&auth_app_id=2016080800194155&charset=utf-8&seller_id=2088102170454992&method=alipay.trade.page.pay.return&app_id=2016080800194155&out_trade_no=2017020212231&version=1.0'
 
     alipay = AliPay(
-        appid="2016080600180695",
-        app_notify_url="http://projectsedus.com/",
-        app_private_key_path=u"H:/VueShop/RSA/private_2048.txt",
-        alipay_public_key_path="H:/VueShop/RSA/ali_pub.txt",  # 支付宝的公钥，验证支付宝回传消息使用，不是你自己的公钥,
-        debug=True,  # 默认False,
-        return_url="http://47.92.87.172:8000/"
+        app_id="2016080800194155",
+        debug=True
     )
 
-    o = urlparse(return_url)
+    o = urlparse(callback_url)
     query = parse_qs(o.query)
     processed_query = {}
     ali_sign = query.pop("sign")[0]
     for key, value in query.items():
         processed_query[key] = value[0]
-    print (alipay.verify(processed_query, ali_sign))
+    print(alipay.verify(processed_query, ali_sign))
 
-    url = alipay.direct_pay(
-        subject="测试订单",
-        out_trade_no="201702021222",
-        total_amount=0.01
+    url = alipay.alipay_trade_page_pay(
+        out_trade_no="201702021223122",
+        total_amount=0.01,
+        subject="测试订单"
     )
     re_url = "https://openapi.alipaydev.com/gateway.do?{data}".format(data=url)
     print(re_url)
