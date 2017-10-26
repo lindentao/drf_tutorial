@@ -13,13 +13,13 @@
 """
 
 import json
+import base64
 from datetime import datetime
 from Crypto.PublicKey import RSA
 from Crypto.Signature import PKCS1_v1_5
 from Crypto.Hash import SHA256
 from urllib.parse import quote_plus
 from urllib.parse import urlparse, parse_qs
-from base64 import decodebytes, encodebytes
 
 import config
 
@@ -68,16 +68,6 @@ class AliPay(object):
         if self.return_url:
             params["return_url"] = self.return_url
 
-        # params = {
-        #     "app_id": '2014072300007148',
-        #     "charset": 'GBK',
-        #     "sign_type": 'RSA2',
-        #     "version": '1.0',
-        #     "method": 'alipay.mobile.public.menu.add',
-        #     "timestamp": '2014-07-24 03:07:50',
-        #     "biz_content": '''{"button":[{"actionParam":"ZFB_HFCZ","actionType":"out","name":"话费充值"},{"name":"查询","subButton":[{"actionParam":"ZFB_YECX","actionType":"out","name":"余额查询"},{"actionParam":"ZFB_LLCX","actionType":"out","name":"流量查询"},{"actionParam":"ZFB_HFCX","actionType":"out","name":"话费查询"}]},{"actionParam":"http://m.alipay.com","actionType":"link","name":"最新优惠"}]}'''
-        # }
-
         return self.sign_data(params)
 
     def sign_data(self, data):
@@ -95,14 +85,9 @@ class AliPay(object):
         return signed_string
 
     def ordered_data(self, data):
-        complex_keys = []
-        for key, value in data.items():
-            if isinstance(value, dict):
-                complex_keys.append(key)
-
-        # 将字典类型的数据dump出来
-        for key in complex_keys:
-            data[key] = json.dumps(data[key], separators=(',', ':'))
+        for k, v in data.items():
+            if isinstance(v, dict):
+                data[k] = json.dumps(v, separators=(',', ':'))
 
         return sorted([(k, v) for k, v in data.items()])
 
@@ -112,7 +97,7 @@ class AliPay(object):
         signer = PKCS1_v1_5.new(key)
         signature = signer.sign(SHA256.new(unsigned_string))
         # base64 编码，转换为unicode表示并移除回车
-        sign = encodebytes(signature).decode("utf8").replace("\n", "")
+        sign = base64.encodebytes(signature).decode("utf8").replace("\n", "")
         return sign
 
     def verify(self, data, signature):
@@ -122,7 +107,7 @@ class AliPay(object):
         signer = PKCS1_v1_5.new(key)
         digest = SHA256.new()
         digest.update(message.encode("utf8"))
-        if signer.verify(digest, decodebytes(signature.encode("utf8"))):
+        if signer.verify(digest, base64.decodebytes(signature.encode("utf8"))):
             return True
         return False
 
@@ -142,6 +127,7 @@ if __name__ == "__main__":
     ali_sign = query.pop("sign")[0]
     for key, value in query.items():
         processed_query[key] = value[0]
+    print(processed_query)
     print(alipay.verify(processed_query, ali_sign))
 
     url = alipay.alipay_trade_page_pay(
