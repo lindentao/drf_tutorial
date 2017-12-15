@@ -20,7 +20,7 @@ class SnippetList(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
-    permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
+    permission_classes = (permissions.IsAuthenticated,)
 
 
 class SnippetDetail(generics.RetrieveUpdateDestroyAPIView):
